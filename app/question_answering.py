@@ -101,6 +101,27 @@ def answer_question(question: str) -> dict:
     if not project or not deployment:
         return _fallback_answer(question)
 
-    # TODO: Implement QA API call
-    # For now, fall back to keyword matching
-    return _fallback_answer(question)
+    try:
+        client = _get_qa_client()
+
+        # Query the QA knowledge base
+        response = client.get_answers(
+            question=question,
+            project_name=project,
+            deployment_name=deployment,
+        )
+
+        # Extract the top answer if available
+        if response.answers and len(response.answers) > 0:
+            top_answer = response.answers[0]
+            return {
+                "answer": top_answer.answer,
+                "confidence": top_answer.confidence,
+                "source": top_answer.source,
+                "follow_up_prompts": top_answer.follow_up_prompts or [],
+            }
+        else:
+            return _fallback_answer(question)
+    except Exception:
+        # If QA call fails, fall back to keyword answers
+        return _fallback_answer(question)

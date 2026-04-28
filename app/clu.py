@@ -129,6 +129,50 @@ def classify_intent(text: str) -> dict:
     if not project or not deployment:
         return _keyword_classify(text)
 
-    # TODO: Implement CLU API call
-    # For now, fall back to keyword matching
-    return _keyword_classify(text)
+    try:
+        client = _get_clu_client()
+
+        # Call CLU analyze_conversation
+        result = client.analyze_conversation(
+            task={
+                "kind": "Conversation",
+                "analysisInput": {
+                    "conversationItem": {
+                        "participantId": "caller",
+                        "id": "1",
+                        "text": text,
+                        "modality": "text",
+                    },
+                    "isLoggingEnabled": False,
+                },
+                "parameters": {
+                    "projectName": project,
+                    "deploymentName": deployment,
+                    "verbose": True,
+                },
+            }
+        )
+
+        # Extract top intent and confidence
+        prediction = result["result"]["prediction"]
+        top_intent = prediction["topIntent"]
+        confidence = prediction["intents"][top_intent]["confidenceScore"]
+
+        # Extract entities
+        entities = []
+        for entity in prediction.get("entities", []):
+            entities.append({
+                "category": entity.get("category", ""),
+                "text": entity.get("text", ""),
+                "confidence": entity.get("confidenceScore", 0.0),
+            })
+
+        return {
+            "top_intent": top_intent,
+            "confidence": confidence,
+            "entities": entities,
+            "method": "clu",
+        }
+    except Exception:
+        # If CLU call fails, fall back to keyword matching
+        return _keyword_classify(text)

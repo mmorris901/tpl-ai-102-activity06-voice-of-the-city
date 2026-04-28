@@ -71,8 +71,35 @@ def transcribe_audio(audio_path: str) -> dict:
         5. Check result.reason == speechsdk.ResultReason.RecognizedSpeech
         6. Return the transcription text, confidence, and duration
     """
-    # TODO: Implement speech-to-text transcription
-    return {"text": "", "confidence": 0.0, "duration_seconds": 0.0, "language": ""}
+    import azure.cognitiveservices.speech as speechsdk
+
+    config = _get_speech_config()
+    audio_config = speechsdk.AudioConfig(filename=audio_path)
+    recognizer = speechsdk.SpeechRecognizer(speech_config=config, audio_config=audio_config)
+
+    result = recognizer.recognize_once()
+
+    if result.reason == speechsdk.ResultReason.RecognizedSpeech:
+        # Extract confidence from JSON result
+        import json
+        json_result = json.loads(result.properties[speechsdk.PropertyId.SpeechServiceResponse_JsonResult])
+        confidence = json_result.get("NBest", [{}])[0].get("Confidence", 0.0)
+
+        # Handle both timedelta and numeric duration formats
+        from datetime import timedelta
+        if isinstance(result.duration, timedelta):
+            duration = result.duration.total_seconds()
+        else:
+            duration = float(result.duration) / 10000000  # Convert ticks to seconds
+
+        return {
+            "text": result.text,
+            "confidence": confidence,
+            "duration_seconds": duration,
+            "language": config.speech_recognition_language,
+        }
+    else:
+        return {"text": "", "confidence": 0.0, "duration_seconds": 0.0, "language": ""}
 
 
 # ── Step 2: Speech Translation ───────────────────────────────────────────
@@ -106,12 +133,43 @@ def translate_speech(audio_path: str, target_languages: list[str] = None) -> dic
     if target_languages is None:
         target_languages = ["en"]
 
-    # TODO: Implement speech translation
-    return {
-        "source_language": "",
-        "translations": {},
-        "duration_seconds": 0.0,
-    }
+    import azure.cognitiveservices.speech as speechsdk
+
+    config = _get_translation_config(target_languages)
+    audio_config = speechsdk.AudioConfig(filename=audio_path)
+    recognizer = speechsdk.translation.TranslationRecognizer(
+        translation_config=config,
+        audio_config=audio_config
+    )
+
+    result = recognizer.recognize_once()
+
+    if result.reason == speechsdk.ResultReason.TranslatedSpeech:
+        # Extract detected source language
+        import json
+        json_result = json.loads(result.properties[speechsdk.PropertyId.SpeechServiceResponse_JsonResult])
+        source_language = json_result.get("Source", "")
+
+        translations = {lang: result.translations.get(lang, "") for lang in target_languages}
+
+        # Handle both timedelta and numeric duration formats
+        from datetime import timedelta
+        if isinstance(result.duration, timedelta):
+            duration = result.duration.total_seconds()
+        else:
+            duration = float(result.duration) / 10000000  # Convert ticks to seconds
+
+        return {
+            "source_language": source_language,
+            "translations": translations,
+            "duration_seconds": duration,
+        }
+    else:
+        return {
+            "source_language": "",
+            "translations": {},
+            "duration_seconds": 0.0,
+        }
 
 
 # ── Step 5: Text-to-Speech ───────────────────────────────────────────────
@@ -139,13 +197,38 @@ def synthesize_response(text: str, output_path: str) -> dict:
         6. Call speak_text_async(text).get() to synthesize
         7. Check result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted
     """
-    # TODO: Implement text-to-speech synthesis
-    return {
-        "output_path": output_path,
-        "duration_seconds": 0.0,
-        "voice_name": "",
-        "used_ssml": False,
-    }
+    import azure.cognitiveservices.speech as speechsdk
+
+    config = _get_speech_config()
+    voice_name = "en-US-JennyNeural"
+    config.speech_synthesis_voice_name = voice_name
+
+    audio_config = speechsdk.audio.AudioOutputConfig(filename=output_path)
+    synthesizer = speechsdk.SpeechSynthesizer(speech_config=config, audio_config=audio_config)
+
+    result = synthesizer.speak_text_async(text).get()
+
+    if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+        # Handle both timedelta and numeric duration formats
+        from datetime import timedelta
+        if isinstance(result.audio_duration, timedelta):
+            duration = result.audio_duration.total_seconds()
+        else:
+            duration = float(result.audio_duration) / 10000000  # Convert ticks to seconds
+        
+        return {
+            "output_path": output_path,
+            "duration_seconds": duration,
+            "voice_name": voice_name,
+            "used_ssml": False,
+        }
+    else:
+        return {
+            "output_path": output_path,
+            "duration_seconds": 0.0,
+            "voice_name": voice_name,
+            "used_ssml": False,
+        }
 
 
 def build_ssml(
@@ -178,8 +261,27 @@ def build_ssml(
         5. Use <say-as interpret-as="..."> for numbers, dates, or phone numbers
         6. Close all tags properly
     """
-    # TODO: Build SSML document
-    return ""
+    import re
+
+    # Replace case numbers and digits with say-as elements
+    # Match patterns like "case 123" or "#456789"
+    def replace_numbers(match):
+        prefix = match.group(1) if match.group(1) else ""
+        number = match.group(2)
+        return f'{prefix}<say-as interpret-as="digits">{number}</say-as>'
+
+    text_with_say_as = re.sub(r'(case\s+#?|#)?(\d{3,})', replace_numbers, text, flags=re.IGNORECASE)
+
+    ssml = f"""<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
+  <voice name="{voice}">
+    <prosody rate="{rate}" pitch="{pitch}">
+      {text_with_say_as}
+      <break time="500ms"/>
+    </prosody>
+  </voice>
+</speak>"""
+
+    return ssml
 
 
 def synthesize_ssml(ssml: str, output_path: str) -> dict:
@@ -200,10 +302,37 @@ def synthesize_ssml(ssml: str, output_path: str) -> dict:
         4. Call speak_ssml_async(ssml).get() instead of speak_text_async
         5. Check result.reason
     """
-    # TODO: Implement SSML synthesis
-    return {
-        "output_path": output_path,
-        "duration_seconds": 0.0,
-        "voice_name": "",
-        "used_ssml": True,
-    }
+    import azure.cognitiveservices.speech as speechsdk
+    import re
+
+    config = _get_speech_config()
+    audio_config = speechsdk.audio.AudioOutputConfig(filename=output_path)
+    synthesizer = speechsdk.SpeechSynthesizer(speech_config=config, audio_config=audio_config)
+
+    result = synthesizer.speak_ssml_async(ssml).get()
+
+    # Extract voice name from SSML
+    voice_match = re.search(r'<voice name="([^"]+)"', ssml)
+    voice_name = voice_match.group(1) if voice_match else "unknown"
+
+    if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+        # Handle both timedelta and numeric duration formats
+        from datetime import timedelta
+        if isinstance(result.audio_duration, timedelta):
+            duration = result.audio_duration.total_seconds()
+        else:
+            duration = float(result.audio_duration) / 10000000  # Convert ticks to seconds
+        
+        return {
+            "output_path": output_path,
+            "duration_seconds": duration,
+            "voice_name": voice_name,
+            "used_ssml": True,
+        }
+    else:
+        return {
+            "output_path": output_path,
+            "duration_seconds": 0.0,
+            "voice_name": voice_name,
+            "used_ssml": True,
+        }
